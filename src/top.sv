@@ -6,7 +6,7 @@ module top (
     output logic [4:0] LCD_R,
     output logic [5:0] LCD_G,
     output logic [4:0] LCD_B,
-    output logic audio_trigger  // NEW
+    output logic audio_trigger
 );
 
 assign LCD_CLK = CLK;
