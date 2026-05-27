@@ -29,7 +29,6 @@ end
 
 assign LCD_DEN = (x < width) && (y < height);
 
-// Red when no face, green when face detected
 always_comb begin
     if (!LCD_DEN) begin
         LCD_R = 5'd0;
