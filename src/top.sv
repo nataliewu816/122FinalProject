@@ -10,7 +10,6 @@ module top (
 );
 
 assign LCD_CLK = CLK;
-assign audio_trigger = face_detected;
 
 lcd lcd_inst (
     .pclk(CLK),
@@ -20,5 +19,29 @@ lcd lcd_inst (
     .LCD_G(LCD_G),
     .LCD_B(LCD_B)
 );
+
+// Rising-edge detect on face_detected, emit one short pulse
+logic face_prev = 0;
+logic [23:0] pulse_counter = 0;
+logic pulse_active = 0;
+
+always_ff @(posedge CLK) begin
+    face_prev <= face_detected;
+
+    if (face_detected && !face_prev) begin
+        pulse_active  <= 1;
+        pulse_counter <= 0;
+    end
+
+    if (pulse_active) begin
+        if (pulse_counter < 24'd2500000) begin  // ~0.1s at 25MHz
+            pulse_counter <= pulse_counter + 1;
+        end else begin
+            pulse_active <= 0;
+        end
+    end
+end
+
+assign audio_trigger = pulse_active;
 
 endmodule
