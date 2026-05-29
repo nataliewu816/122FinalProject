@@ -20,7 +20,6 @@ lcd lcd_inst (
     .LCD_B(LCD_B)
 );
 
-// Rising-edge detect on face_detected, emit one short pulse
 logic face_prev = 0;
 logic [23:0] pulse_counter = 0;
 logic pulse_active = 0;
@@ -34,7 +33,7 @@ always_ff @(posedge CLK) begin
     end
 
     if (pulse_active) begin
-        if (pulse_counter < 24'd2500000) begin  // ~0.1s at 25MHz
+        if (pulse_counter < 24'd2500000) begin
             pulse_counter <= pulse_counter + 1;
         end else begin
             pulse_active <= 0;
