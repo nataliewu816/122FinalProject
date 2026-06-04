@@ -13,6 +13,11 @@
 #define VSYNC_PIN 20
 #define HREF_PIN  21
 
+//detection tuning
+#define FRAMES_PER_DECISION 5 
+#define THRESHOLD_ON   42 
+#define THRESHOLD_OFF  36
+
 static const uint8_t OV2640_QVGA[][2] = {
     {0xff, 0x00}, {0x2c, 0xff}, {0x2e, 0xdf},
     {0xff, 0x01}, {0x3c, 0x32}, {0x11, 0x00}, {0x09, 0x02}, {0x04, 0xa8},
@@ -68,12 +73,6 @@ bool cam_write(uint8_t reg, uint8_t value) {
     uint8_t buf[2] = { reg, value };
     return i2c_write_blocking(I2C_PORT, CAM_ADDR, buf, 2, false) == 2;
 }
-uint8_t cam_read(uint8_t reg) {
-    i2c_write_blocking(I2C_PORT, CAM_ADDR, &reg, 1, true);
-    uint8_t v = 0;
-    i2c_read_blocking(I2C_PORT, CAM_ADDR, &v, 1, false);
-    return v;
-}
 bool apply_table(const uint8_t table[][2]) {
     bool ok = true;
     for (int i = 0; ; i++) {
@@ -83,47 +82,48 @@ bool apply_table(const uint8_t table[][2]) {
     }
     return ok;
 }
-void blink(int times, int ms) {
-    for (int i = 0; i < times; i++) {
-        gpio_put(LED_PIN, 1); sleep_ms(ms);
-        gpio_put(LED_PIN, 0); sleep_ms(ms);
-    }
-}
 
-
-int capture_average(void) {
+int capture_reddish(void) {
     const uint32_t TIMEOUT = 5000000;
     uint32_t t;
 
     int v_start = gpio_get(VSYNC_PIN);
-    t = 0;
-    while (gpio_get(VSYNC_PIN) == v_start) { if (++t > TIMEOUT) return -1; }
+    t = 0; while (gpio_get(VSYNC_PIN) == v_start) { if (++t > TIMEOUT) return -1; }
     int v2 = gpio_get(VSYNC_PIN);
-    t = 0;
-    while (gpio_get(VSYNC_PIN) == v2) { if (++t > TIMEOUT) return -1; }
+    t = 0; while (gpio_get(VSYNC_PIN) == v2) { if (++t > TIMEOUT) return -1; }
 
-    uint64_t sum = 0;
-    uint32_t count = 0;
-    uint32_t budget = 200000;
-
+    uint32_t reddish = 0, total = 0;
     int v_now = gpio_get(VSYNC_PIN);
-    while (budget > 0) {
-        budget--;
-        if (gpio_get(VSYNC_PIN) != v_now) break;
-        if (gpio_get(HREF_PIN)) {
-            uint32_t g = 0;
-            while (gpio_get(PCLK_PIN) == 0) { if (++g > 1000) goto next; }
-            uint32_t all = gpio_get_all();
-            sum += (all >> D0_PIN) & 0xFF;
-            count++;
-            g = 0;
-            while (gpio_get(PCLK_PIN) == 1) { if (++g > 1000) goto next; }
-        }
-        next:;
-    }
 
-    if (count == 0) return -1;
-    return (int)(sum / count);
+    for (int row = 0; row < 100; row++) {
+        t = 0; while (gpio_get(HREF_PIN) == 1) { if (++t > TIMEOUT) goto done; if (gpio_get(VSYNC_PIN) != v_now) goto done; }
+        t = 0; while (gpio_get(HREF_PIN) == 0) { if (++t > TIMEOUT) goto done; if (gpio_get(VSYNC_PIN) != v_now) goto done; }
+
+        int px = 0;
+        while (gpio_get(HREF_PIN) == 1 && px < 200) {
+            uint32_t g;
+            g = 0; while (gpio_get(PCLK_PIN) == 0) { if (++g > 1000) goto rowdone; }
+            uint8_t hi = (gpio_get_all() >> D0_PIN) & 0xFF;
+            g = 0; while (gpio_get(PCLK_PIN) == 1) { if (++g > 1000) goto rowdone; }
+            g = 0; while (gpio_get(PCLK_PIN) == 0) { if (++g > 1000) goto rowdone; }
+            uint8_t lo = (gpio_get_all() >> D0_PIN) & 0xFF;
+            g = 0; while (gpio_get(PCLK_PIN) == 1) { if (++g > 1000) goto rowdone; }
+
+            uint16_t pixel = ((uint16_t)hi << 8) | lo;
+            uint8_t r   = (pixel >> 11) & 0x1F;
+            uint8_t grn = (pixel >> 5)  & 0x3F;
+            uint8_t b   =  pixel        & 0x1F;
+            uint8_t g_scaled = grn >> 1;
+
+            total++;
+            if (r > g_scaled && r > b && r > 8) reddish++;
+            px++;
+        }
+        rowdone:;
+    }
+done:
+    if (total == 0) return -1;
+    return (int)((reddish * 100) / total);
 }
 
 int main() {
@@ -153,11 +153,22 @@ int main() {
     apply_table(OV2640_RGB565);
     sleep_ms(100);
 
+    bool face = false;
+
     while (true) {
-        int avg = capture_average();
-        if (avg < 0)        { blink(5, 80);  sleep_ms(1500); }  // capture failed
-        else if (avg < 64)  { blink(1, 300); sleep_ms(1500); }  // dark
-        else if (avg < 160) { blink(2, 300); sleep_ms(1500); }  // medium
-        else                { blink(3, 300); sleep_ms(1500); }  // bright
+        int sum = 0, valid = 0;
+        for (int i = 0; i < FRAMES_PER_DECISION; i++) {
+            int p = capture_reddish();
+            if (p >= 0) { sum += p; valid++; }
+        }
+        int avg = (valid > 0) ? (sum / valid) : 0;
+
+        if (!face && avg >= THRESHOLD_ON)  face = true;
+        if (face  && avg <  THRESHOLD_OFF) face = false;
+
+        gpio_put(LED_PIN, face ? 1 : 0);
+
+        printf("avg_reddish=%d  decision=%s\n", avg, face ? "FACE" : "NONE");
+        sleep_ms(100);
     }
 }
