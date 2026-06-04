@@ -13,10 +13,12 @@
 #define VSYNC_PIN 20
 #define HREF_PIN  21
 
-//detection tuning
-#define FRAMES_PER_DECISION 5 
-#define THRESHOLD_ON   42 
-#define THRESHOLD_OFF  36
+// ---- detection tuning ----
+#define FRAMES_PER_DECISION 5
+#define MATCH_ON   38
+#define MATCH_OFF  32
+#define MIN_BRIGHT     6
+#define RED_OVER_BLUE  2
 
 static const uint8_t OV2640_QVGA[][2] = {
     {0xff, 0x00}, {0x2c, 0xff}, {0x2e, 0xdf},
@@ -83,7 +85,8 @@ bool apply_table(const uint8_t table[][2]) {
     return ok;
 }
 
-int capture_reddish(void) {
+// Capture one frame, return percent of skin-matching pixels (0..100), or -1.
+int capture_skin_percent(void) {
     const uint32_t TIMEOUT = 5000000;
     uint32_t t;
 
@@ -92,7 +95,7 @@ int capture_reddish(void) {
     int v2 = gpio_get(VSYNC_PIN);
     t = 0; while (gpio_get(VSYNC_PIN) == v2) { if (++t > TIMEOUT) return -1; }
 
-    uint32_t reddish = 0, total = 0;
+    uint32_t match = 0, total = 0;
     int v_now = gpio_get(VSYNC_PIN);
 
     for (int row = 0; row < 100; row++) {
@@ -110,20 +113,24 @@ int capture_reddish(void) {
             g = 0; while (gpio_get(PCLK_PIN) == 1) { if (++g > 1000) goto rowdone; }
 
             uint16_t pixel = ((uint16_t)hi << 8) | lo;
-            uint8_t r   = (pixel >> 11) & 0x1F;
-            uint8_t grn = (pixel >> 5)  & 0x3F;
-            uint8_t b   =  pixel        & 0x1F;
-            uint8_t g_scaled = grn >> 1;
+            int r   = (pixel >> 11) & 0x1F;
+            int grn = (pixel >> 5)  & 0x3F;
+            int b   =  pixel        & 0x1F;
+            int g_scaled = grn >> 1;
 
             total++;
-            if (r > g_scaled && r > b && r > 8) reddish++;
+            if (r >= g_scaled && r > b &&
+                (r - b) >= RED_OVER_BLUE &&
+                (r + g_scaled + b) >= MIN_BRIGHT) {
+                match++;
+            }
             px++;
         }
         rowdone:;
     }
 done:
     if (total == 0) return -1;
-    return (int)((reddish * 100) / total);
+    return (int)((match * 100) / total);
 }
 
 int main() {
@@ -131,6 +138,10 @@ int main() {
 
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
+
+    gpio_init(22);
+    gpio_set_dir(22, GPIO_OUT);
+    gpio_put(22, 0);
 
     for (int p = D0_PIN; p <= D0_PIN + 7; p++) { gpio_init(p); gpio_set_dir(p, GPIO_IN); }
     gpio_init(PCLK_PIN);  gpio_set_dir(PCLK_PIN, GPIO_IN);
@@ -156,19 +167,19 @@ int main() {
     bool face = false;
 
     while (true) {
-        int sum = 0, valid = 0;
-        for (int i = 0; i < FRAMES_PER_DECISION; i++) {
-            int p = capture_reddish();
-            if (p >= 0) { sum += p; valid++; }
+        int sum=0, valid=0;
+        for (int i=0;i<FRAMES_PER_DECISION;i++){
+            int p = capture_skin_percent();
+            if (p>=0){ sum+=p; valid++; }
         }
-        int avg = (valid > 0) ? (sum / valid) : 0;
+        int avg = valid? sum/valid : 0;
 
-        if (!face && avg >= THRESHOLD_ON)  face = true;
-        if (face  && avg <  THRESHOLD_OFF) face = false;
+        if (!face && avg >= MATCH_ON)  face = true;
+        if (face  && avg <  MATCH_OFF) face = false;
 
-        gpio_put(LED_PIN, face ? 1 : 0);
-
-        printf("avg_reddish=%d  decision=%s\n", avg, face ? "FACE" : "NONE");
+        gpio_put(LED_PIN, face?1:0);
+        gpio_put(22, face ? 1 : 0);
+        printf("skin=%d%%  decision=%s\n", avg, face?"FACE":"NONE");
         sleep_ms(100);
     }
 }
