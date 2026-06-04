@@ -50,3 +50,6 @@ INPUT PORT "face_detected" IO_TYPE=LVCMOS33;
 
 LOCATE COMP "audio_trigger" SITE "J3";
 IOBUF PORT "audio_trigger" IO_TYPE=LVCMOS33;
+
+LOCATE COMP "busy" SITE "R7";
+IOBUF PORT "busy" IO_TYPE=LVCMOS33;

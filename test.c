@@ -15,9 +15,9 @@
 
 // ---- detection tuning ----
 #define FRAMES_PER_DECISION 5
-#define MATCH_ON   38
+#define MATCH_ON   35
 #define MATCH_OFF  32
-#define MIN_BRIGHT     6
+#define MIN_BRIGHT 8
 #define RED_OVER_BLUE  2
 
 static const uint8_t OV2640_QVGA[][2] = {
